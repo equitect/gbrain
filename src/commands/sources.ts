@@ -152,6 +152,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let patFile: string | undefined;
   let noHarden = false;
   let force = false;
+  let nested = false;
   // v0.46 github-kind flags.
   let ghKind = false;
   let ghTokenEnv: string | undefined;
@@ -182,6 +183,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
     if (a === '--force') { force = true; continue; }
+    if (a === '--nested') { nested = true; continue; }
     if (a === '--kind') {
       const kind = args[++i];
       if (kind === 'github') {
@@ -405,6 +407,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     federated,
     cloneDir,
     force,
+    nested,
     ...(ghKind
       ? {
           github: {
@@ -1875,9 +1878,12 @@ function printHelp(): void {
   console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
 
 Subcommands:
-  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--nested]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
+                                    --nested (fork patch) allows a path strictly inside
+                                    another source's tree; sync then excludes it from
+                                    the parent. Use with sync.write_through=false.
   list [--json]                     List registered sources with page counts.
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.
@@ -1916,7 +1922,8 @@ Subcommands:
                                     override (v0.40.3.0). Pass "unset" or
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
-  set-path <id> <path> [--force]    Repair a source's local_path pointer
+  set-path <id> <path> [--force] [--nested]
+                                    Repair a source's local_path pointer
                                     (DB column only, never touches disk).
                                     --force skips the overlapping-path guard.
                                     Rejects a missing source or a path that

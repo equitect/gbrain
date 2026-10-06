@@ -1183,6 +1183,43 @@ describe('addSource --path — #3903 attach to existing path-less source', () =>
     expect(threw?.code).toBe('overlapping_path');
   });
 
+  // Equitect fork patch (nested sources).
+  test('nested path is rejected by default, accepted with nested: true; identical stays rejected', async () => {
+    const parent = makeGitRepo('nest-parent');
+    const child = join(parent, 'matters', 'case-a');
+    mkdirSync(child, { recursive: true });
+    await addSource(engine, { id: 'nest-parent', localPath: parent });
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'nest-child', localPath: child, force: true });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw?.code).toBe('overlapping_path');
+    const row = await addSource(engine, { id: 'nest-child', localPath: child, force: true, nested: true });
+    expect(row.local_path).toBe(child);
+    let same: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'nest-twin', localPath: parent, force: true, nested: true });
+    } catch (e) {
+      same = e as SourceOpError;
+    }
+    expect(same?.code).toBe('overlapping_path');
+  });
+
+  test('excludeNestedSources excludes a nested source subtree from its parent only', async () => {
+    const { excludeNestedSources } = await import('../src/commands/sync.ts');
+    const parent = makeGitRepo('nest-parent-2');
+    const child = join(parent, 'litigation', 'Case_B');
+    mkdirSync(child, { recursive: true });
+    await addSource(engine, { id: 'np2', localPath: parent });
+    await addSource(engine, { id: 'nc2', localPath: child, force: true, nested: true });
+    const forParent = await excludeNestedSources(engine, { sourceId: 'np2', exclude: ['tmp/**'] } as any, parent);
+    expect(forParent.exclude).toEqual(['tmp/**', 'litigation/Case_B/**']);
+    const forChild = await excludeNestedSources(engine, { sourceId: 'nc2' } as any, child);
+    expect(forChild.exclude ?? []).toEqual([]);
+  });
+
   test('taken-WITH-path still throws, and the message warns remove deletes pages', async () => {
     const gitDir = makeGitRepo('already-pathed');
     await engine.executeRaw(

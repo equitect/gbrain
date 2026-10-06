@@ -22,7 +22,8 @@ import { assertNoOverlappingPath, SourceOpError } from '../core/sources-ops.ts';
 
 export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promise<void> {
   const force = rawArgs.includes('--force');
-  const args = rawArgs.filter((a) => a !== '--force');
+  const nested = rawArgs.includes('--nested');
+  const args = rawArgs.filter((a) => a !== '--force' && a !== '--nested');
   const id = args[0];
   const rawPath = args[1];
 
@@ -64,7 +65,7 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
 
   if (!force) {
     try {
-      await assertNoOverlappingPath(engine, id, path);
+      await assertNoOverlappingPath(engine, id, path, { allowNested: nested });
     } catch (e) {
       if (e instanceof SourceOpError && e.code === 'overlapping_path') {
         console.error(`Error (${e.code}): ${e.message}`);

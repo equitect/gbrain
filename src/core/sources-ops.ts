@@ -157,6 +157,11 @@ export interface AddSourceOpts {
    */
   force?: boolean;
   /**
+   * Equitect fork patch: allow `localPath` to sit strictly inside (or around)
+   * another source's tree. CLI: `gbrain sources add … --nested`.
+   */
+  nested?: boolean;
+  /**
    * v0.46: register a github-kind source (issues/PR sync). When set, the
    * row is inserted with kind=github config and a managed local_path, and
    * no git validation or clone happens. See src/core/github-source.ts.
@@ -387,6 +392,7 @@ export async function assertNoOverlappingPath(
   engine: BrainEngine,
   id: string,
   path: string,
+  opts: { allowNested?: boolean } = {},
 ): Promise<void> {
   const others = await engine.executeRaw<{ id: string; local_path: string }>(
     `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
@@ -404,8 +410,18 @@ export async function assertNoOverlappingPath(
       return p;
     }
   };
+  // Equitect fork patch (nested sources, 2026-10-05): with `allowNested`, a
+  // path strictly inside (or strictly enclosing) another source's tree is
+  // accepted — sync then excludes each nested source's subtree from its
+  // parent (`excludeNestedSources`, commands/sync.ts), so every file has
+  // exactly one indexing source. Identical paths stay rejected. Scope: sync
+  // attribution only. Run nested trees with `sync.write_through=false`: with
+  // write-through on, `delete` also unlinks the page's file under the source
+  // path — an Equitect maintenance pass on 2026-10-05 removed 174 vault files
+  // that way (restored from backup) — and write-through/file-watchers have
+  // not been audited for nested attribution.
   const overlaps = (x: string, y: string): boolean =>
-    x === y || x.startsWith(y + '/') || y.startsWith(x + '/');
+    x === y || (!opts.allowNested && (x.startsWith(y + '/') || y.startsWith(x + '/')));
   const realPath = real(path);
   for (const other of others) {
     const b = other.local_path;
@@ -525,7 +541,7 @@ export async function addSource(
   if (parsedUrl) {
     finalPath = opts.cloneDir ?? defaultCloneDir(opts.id);
   }
-  if (finalPath) await assertNoOverlappingPath(engine, opts.id, finalPath);
+  if (finalPath) await assertNoOverlappingPath(engine, opts.id, finalPath, { allowNested: opts.nested === true });
 
   // ── Path A: --url (clone + INSERT + rename) ────────────────────────────
   if (parsedUrl) {

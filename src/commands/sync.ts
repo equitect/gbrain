@@ -1231,6 +1231,51 @@ async function verifyOrRestoreClearedSentinels(
   }
 }
 
+/**
+ * Equitect fork patch (nested sources, 2026-10-05). When another source's
+ * local_path sits strictly inside this sync's scope root, exclude that subtree
+ * from THIS source — the nested source indexes it on its own. Per-source and
+ * automatic, unlike `sync.exclude` (brain-wide: excluding a matter folder there
+ * also blinds the matter's own source, whose files share the root-relative
+ * prefix). Patterns are scope-root-relative globs, the dialect `--exclude`
+ * uses in both the delta and the full-sync paths. Exclusion never deletes
+ * pages already imported (same as `--exclude`): moving a subtree into a new
+ * nested source needs a one-time removal of the parent's index rows — with
+ * `sync.write_through=false`, so no file is touched.
+ */
+export async function excludeNestedSources(
+  engine: BrainEngine,
+  opts: SyncOpts,
+  syncScopeRoot: string,
+): Promise<SyncOpts> {
+  let rows: { id: string; local_path: string }[] = [];
+  try {
+    rows = await engine.executeRaw<{ id: string; local_path: string }>(
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
+      [opts.sourceId ?? 'default'],
+    );
+  } catch {
+    return opts; // never break a sync over the scope read
+  }
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const root = real(syncScopeRoot);
+  const patterns: string[] = [];
+  for (const row of rows) {
+    const child = real(row.local_path);
+    if (child.startsWith(root + '/')) {
+      patterns.push(`${child.slice(root.length + 1)}/**`);
+    }
+  }
+  if (patterns.length === 0) return opts;
+  return { ...opts, exclude: [...new Set([...(opts.exclude ?? []), ...patterns])] };
+}
+
 async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   // v0.41.8.0 (D9 / #1342): phase breadcrumbs. The #1342 reporter saw
   // ZERO stderr output before their sync hang, which made the bug
@@ -1704,6 +1749,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       opts = { ...opts, exclude: [...new Set([...(opts.exclude ?? []), ...storedPatterns])] };
     }
   } catch { /* config unreadable — never break a sync over the scope read */ }
+  opts = await excludeNestedSources(engine, opts, syncScopeRoot);
 
   // #1970: bookmark reachability. The ONLY thing that should force a full
   // reconcile is a truly-absent object; a present-but-non-ancestor bookmark
